@@ -45,8 +45,8 @@ ErrorControl   = 1               ; SERVICE_ERROR_NORMAL
 ServiceBinary  = %12%\vhid_mouse.sys
 
 [Strings]
-ProviderName     = "VirtualInput"
-ManufacturerName = "VirtualInput"
-DiskName         = "Virtual HID Mouse Installation Disk"
-DeviceDesc       = "Virtual HID Mouse Device"
-ServiceDesc      = "Virtual HID Mouse Service"
+ProviderName     = "Logitech"
+ManufacturerName = "Logitech"
+DiskName         = "Logitech USB Driver Disk"
+DeviceDesc       = "Logitech USB Input Device"
+ServiceDesc      = "Logitech USB Input Service"

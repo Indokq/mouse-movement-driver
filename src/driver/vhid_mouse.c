@@ -120,6 +120,53 @@ VOID EvtIoDeviceControl(WDFQUEUE Queue, WDFREQUEST Request, size_t OutputBufferL
 
     PDEVICE_CONTEXT context = GetDeviceContext(WdfIoQueueGetDevice(Queue));
 
+    if (IoControlCode == IOCTL_VHID_SECURE_INPUT) {
+        PVHID_SECURE_PACKET packet;
+        status = WdfRequestRetrieveInputBuffer(Request, sizeof(VHID_SECURE_PACKET), (PVOID*)&packet, NULL);
+        if (NT_SUCCESS(status)) {
+            //
+            // 1. Decrypt (XOR)
+            //
+            unsigned char* raw = (unsigned char*)packet;
+            for (int i = 0; i < sizeof(VHID_SECURE_PACKET); i++) {
+                raw[i] ^= VHID_ENCRYPTION_KEY;
+            }
+
+            //
+            // 2. Dispatch based on Type
+            //
+            if (packet->Type == PacketType_Mouse && packet->Size == sizeof(MOUSE_MOVE_REQUEST)) {
+                PMOUSE_MOVE_REQUEST move = (PMOUSE_MOVE_REQUEST)packet->Payload;
+                
+                WDFREQUEST hidRequest;
+                status = WdfIoQueueRetrieveNextRequest(context->HidQueue, &hidRequest);
+                if (NT_SUCCESS(status)) {
+                    PVOID hidBuffer;
+                    size_t len = 0;
+                    status = WdfRequestRetrieveOutputBuffer(hidRequest, sizeof(HID_MOUSE_REPORT), &hidBuffer, &len);
+                    if (NT_SUCCESS(status) && len >= sizeof(HID_MOUSE_REPORT)) {
+                        PHID_MOUSE_REPORT report = (PHID_MOUSE_REPORT)hidBuffer;
+                        report->ReportId = 1; // Mouse Collection
+                        report->Buttons = move->buttons;
+                        report->X = (char)move->dx;
+                        report->Y = (char)move->dy;
+                        report->Wheel = (char)move->wheel;
+                        WdfRequestCompleteWithInformation(hidRequest, STATUS_SUCCESS, sizeof(HID_MOUSE_REPORT));
+                    } else {
+                        WdfRequestComplete(hidRequest, status);
+                    }
+                }
+            }
+            else if (packet->Type == PacketType_Keyboard && packet->Size == sizeof(KEYBOARD_INPUT_REQUEST)) {
+                 // Keyboard logic would go here (requires mapping ScanCode -> HID Key)
+                 // For now, we acknowledge reception.
+                 status = STATUS_SUCCESS;
+            }
+        }
+        WdfRequestComplete(Request, status);
+        return;
+    }
+
     if (IoControlCode == IOCTL_VHID_MOUSE_MOVE) {
         PMOUSE_MOVE_REQUEST moveData;
         status = WdfRequestRetrieveInputBuffer(Request, sizeof(MOUSE_MOVE_REQUEST), (PVOID*)&moveData, NULL);
