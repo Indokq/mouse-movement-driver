@@ -4,6 +4,10 @@
 #include "..\shared\vhid_interface.h"
 #include "hid_descriptor.h"
 
+// HID descriptor type constants
+#define HID_HID_DESCRIPTOR_TYPE     0x21
+#define HID_REPORT_DESCRIPTOR_TYPE  0x22
+
 typedef struct _DEVICE_CONTEXT {
     WDFDEVICE Device;
     WDFQUEUE  HidQueue;     // Queue for HID class requests (ReadReport)
@@ -31,10 +35,7 @@ NTSTATUS EvtDeviceAdd(WDFDRIVER Driver, PWDFDEVICE_INIT DeviceInit) {
     PDEVICE_CONTEXT context;
     WDF_IO_QUEUE_CONFIG queueConfig;
     NTSTATUS status;
-
-    // Register as a HID Minidriver
-    status = HidRegisterMinidriver(DeviceInit);
-    if (!NT_SUCCESS(status)) return status;
+    HID_MINIDRIVER_REGISTRATION hidRegistration;
 
     WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&deviceAttributes, DEVICE_CONTEXT);
     status = WdfDeviceCreate(&DeviceInit, &deviceAttributes, &device);
@@ -43,8 +44,22 @@ NTSTATUS EvtDeviceAdd(WDFDRIVER Driver, PWDFDEVICE_INIT DeviceInit) {
     context = GetDeviceContext(device);
     context->Device = device;
 
-    // Internal Queue for HID Class communication
-    WDF_IO_QUEUE_CONFIG_INIT_DEFAULT_QUEUE(&queueConfig, WdfIoQueueDispatchManual);
+    // Register as HID minidriver
+    RtlZeroMemory(&hidRegistration, sizeof(hidRegistration));
+    hidRegistration.Revision = HID_REVISION;
+    hidRegistration.DriverObject = WdfDriverWdmGetDriverObject(Driver);
+    hidRegistration.RegistryPath = WdfDriverGetRegistryPath(Driver);
+    hidRegistration.DeviceExtensionSize = 0;
+    hidRegistration.DevicesArePolled = FALSE;
+
+    // Internal Queue for HID Class communication (internal IOCTLs)
+    WDF_IO_QUEUE_CONFIG_INIT_DEFAULT_QUEUE(&queueConfig, WdfIoQueueDispatchParallel);
+    queueConfig.EvtIoInternalDeviceControl = EvtInternalDeviceControl;
+    status = WdfIoQueueCreate(device, &queueConfig, WDF_NO_OBJECT_ATTRIBUTES, NULL);
+    if (!NT_SUCCESS(status)) return status;
+
+    // Manual Queue for pending HID read requests
+    WDF_IO_QUEUE_CONFIG_INIT(&queueConfig, WdfIoQueueDispatchManual);
     status = WdfIoQueueCreate(device, &queueConfig, WDF_NO_OBJECT_ATTRIBUTES, &context->HidQueue);
     if (!NT_SUCCESS(status)) return status;
 
@@ -72,11 +87,11 @@ VOID EvtInternalDeviceControl(WDFQUEUE Queue, WDFREQUEST Request, size_t OutputB
                 PHID_DESCRIPTOR desc = (PHID_DESCRIPTOR)buffer;
                 RtlZeroMemory(desc, sizeof(HID_DESCRIPTOR));
                 desc->bLength = sizeof(HID_DESCRIPTOR);
-                desc->bDescriptorType = HID_RESDESC_TYPE_HID;
+                desc->bDescriptorType = HID_HID_DESCRIPTOR_TYPE;
                 desc->bcdHID = 0x0110;
-                desc->bCountryCode = 0;
+                desc->bCountry = 0;
                 desc->bNumDescriptors = 1;
-                desc->DescriptorList[0].bReportType = HID_RESDESC_TYPE_REPORT;
+                desc->DescriptorList[0].bReportType = HID_REPORT_DESCRIPTOR_TYPE;
                 desc->DescriptorList[0].wReportLength = MouseReportDescriptorSize;
                 bytesReturned = sizeof(HID_DESCRIPTOR);
             }
@@ -119,24 +134,31 @@ VOID EvtIoDeviceControl(WDFQUEUE Queue, WDFREQUEST Request, size_t OutputBufferL
     UNREFERENCED_PARAMETER(InputBufferLength);
 
     PDEVICE_CONTEXT context = GetDeviceContext(WdfIoQueueGetDevice(Queue));
+    NTSTATUS status = STATUS_SUCCESS;
 
     if (IoControlCode == IOCTL_VHID_SECURE_INPUT) {
-        PVHID_SECURE_PACKET packet;
-        status = WdfRequestRetrieveInputBuffer(Request, sizeof(VHID_SECURE_PACKET), (PVOID*)&packet, NULL);
+        PVHID_SECURE_PACKET packetPtr;
+        VHID_SECURE_PACKET packet;  // Local copy to avoid writing to read-only input buffer
+        status = WdfRequestRetrieveInputBuffer(Request, sizeof(VHID_SECURE_PACKET), (PVOID*)&packetPtr, NULL);
         if (NT_SUCCESS(status)) {
             //
-            // 1. Decrypt (XOR)
+            // 1. Copy to local buffer before decryption (input buffer may be read-only)
             //
-            unsigned char* raw = (unsigned char*)packet;
+            RtlCopyMemory(&packet, packetPtr, sizeof(VHID_SECURE_PACKET));
+
+            //
+            // 2. Decrypt (XOR) the local copy
+            //
+            unsigned char* raw = (unsigned char*)&packet;
             for (int i = 0; i < sizeof(VHID_SECURE_PACKET); i++) {
                 raw[i] ^= VHID_ENCRYPTION_KEY;
             }
 
             //
-            // 2. Dispatch based on Type
+            // 3. Dispatch based on Type
             //
-            if (packet->Type == PacketType_Mouse && packet->Size == sizeof(MOUSE_MOVE_REQUEST)) {
-                PMOUSE_MOVE_REQUEST move = (PMOUSE_MOVE_REQUEST)packet->Payload;
+            if (packet.Type == PacketType_Mouse && packet.Size == sizeof(MOUSE_MOVE_REQUEST)) {
+                PMOUSE_MOVE_REQUEST move = (PMOUSE_MOVE_REQUEST)packet.Payload;
                 
                 WDFREQUEST hidRequest;
                 status = WdfIoQueueRetrieveNextRequest(context->HidQueue, &hidRequest);
@@ -157,7 +179,7 @@ VOID EvtIoDeviceControl(WDFQUEUE Queue, WDFREQUEST Request, size_t OutputBufferL
                     }
                 }
             }
-            else if (packet->Type == PacketType_Keyboard && packet->Size == sizeof(KEYBOARD_INPUT_REQUEST)) {
+            else if (packet.Type == PacketType_Keyboard && packet.Size == sizeof(KEYBOARD_INPUT_REQUEST)) {
                  // Keyboard logic would go here (requires mapping ScanCode -> HID Key)
                  // For now, we acknowledge reception.
                  status = STATUS_SUCCESS;
@@ -178,6 +200,7 @@ VOID EvtIoDeviceControl(WDFQUEUE Queue, WDFREQUEST Request, size_t OutputBufferL
                 status = WdfRequestRetrieveOutputBuffer(hidRequest, sizeof(HID_MOUSE_REPORT), &hidBuffer, NULL);
                 if (NT_SUCCESS(status)) {
                     PHID_MOUSE_REPORT report = (PHID_MOUSE_REPORT)hidBuffer;
+                    report->ReportId = 1; // Mouse Collection
                     report->Buttons = moveData->buttons;
                     report->X = (char)moveData->dx;
                     report->Y = (char)moveData->dy;

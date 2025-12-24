@@ -7,13 +7,13 @@
     </ProjectConfiguration>
   </ItemGroup>
   <PropertyGroup Label="Globals">
-    <ProjectGuid>{12345678-1234-1234-1234-1234567890AB}</ProjectGuid>
+    <ProjectGuid>{12345678-1234-1234-1234-1234567890CD}</ProjectGuid>
     <TemplateGuid>{1bc93793-694f-48fe-9372-81e2b05556fd}</TemplateGuid>
     <TargetFrameworkVersion>v4.5</TargetFrameworkVersion>
     <MinimumVisualStudioVersion>12.0</MinimumVisualStudioVersion>
     <Configuration>Release</Configuration>
     <Platform Condition="'$(Platform)' == ''">x64</Platform>
-    <RootNamespace>vhid_mouse</RootNamespace>
+    <RootNamespace>vhid_mouse_wdm</RootNamespace>
     <WindowsTargetPlatformVersion>$(LatestTargetPlatformVersion)</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
@@ -22,42 +22,42 @@
     <UseDebugLibraries>false</UseDebugLibraries>
     <PlatformToolset>WindowsKernelModeDriver10.0</PlatformToolset>
     <ConfigurationType>Driver</ConfigurationType>
-    <DriverType>KMDF</DriverType>
+    <!-- WDM instead of KMDF - no WDF dependencies -->
+    <DriverType>WDM</DriverType>
     <DriverTargetPlatform>Desktop</DriverTargetPlatform>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <PropertyGroup>
     <OutDir>$(SolutionDir)$(Platform)\$(Configuration)\</OutDir>
-    <IntDir>$(Platform)\$(Configuration)\</IntDir>
+    <IntDir>$(Platform)\$(Configuration)\wdm\</IntDir>
+    <TargetName>vhid_mouse_wdm</TargetName>
   </PropertyGroup>
   <ItemDefinitionGroup>
     <ClCompile>
       <WarningLevel>Level4</WarningLevel>
       <TreatWarningAsError>false</TreatWarningAsError>
       <AdditionalIncludeDirectories>$(IntDir);%(AdditionalIncludeDirectories);..\shared</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_AMD64_;AMD64;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <!-- Optimize for size - better for manual mapping -->
+      <Optimization>MinSpace</Optimization>
+      <WholeProgramOptimization>false</WholeProgramOptimization>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>hidclass.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <!-- Minimal dependencies - just ntoskrnl -->
+      <AdditionalDependencies>%(AdditionalDependencies)</AdditionalDependencies>
+      <!-- Optimize for mapper - no incremental linking -->
+      <LinkIncremental>false</LinkIncremental>
     </Link>
-    <Inf2Cat>
-      <UseLocalTime>true</UseLocalTime>
-    </Inf2Cat>
     <DriverSign>
       <FileDigestAlgorithm>SHA256</FileDigestAlgorithm>
     </DriverSign>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <Inf Include="vhid_mouse.inf" />
-  </ItemGroup>
-  <ItemGroup>
     <FilesToPackage Include="$(TargetPath)" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="vhid_mouse.c" />
-  </ItemGroup>
-  <ItemGroup>
-    <ClInclude Include="hid_descriptor.h" />
-    <ClInclude Include="..\shared\vhid_interface.h" />
+    <!-- Use the WDM version of the driver -->
+    <ClCompile Include="vhid_mouse_wdm_v2.c" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

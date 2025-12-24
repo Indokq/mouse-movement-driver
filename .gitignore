@@ -1,0 +1,31 @@
+# Build outputs
+bin/
+x64/
+Debug/
+Release/
+*.obj
+*.pdb
+*.exe
+*.sys
+*.cat
+*.cer
+*.log
+*.iobj
+*.ipdb
+*.tlog/
+*.lastbuildstate
+*.recipe
+*.vcxproj.FileListAbsolute.txt
+
+# Visual Studio
+.vs/
+*.suo
+*.user
+*.db
+*.db-shm
+*.db-wal
+*.opendb
+
+# Keep driver binaries in specific locations if needed
+!src/Loader/bin/Release/*.sys
+!src/Loader/bin/Release/*.exe

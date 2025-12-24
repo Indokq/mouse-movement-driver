@@ -5,6 +5,7 @@ ClassGuid   = {4d36e96f-e325-11ce-bfc1-08002be10318}
 Provider    = %ProviderName%
 DriverVer   = 12/23/2025,1.0.0.0
 CatalogFile = vhid_mouse.cat
+PnpLockdown = 1
 
 [DestinationDirs]
 DefaultDestDir = 12
